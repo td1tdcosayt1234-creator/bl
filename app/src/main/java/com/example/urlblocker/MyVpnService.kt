@@ -26,6 +26,7 @@ class MyVpnService : VpnService() {
 
     private var tun: ParcelFileDescriptor? = null
     @Volatile private var runLoop = false
+    @Volatile private var fullLock = false
     private var reader: ExecutorService? = null
     private var dnsPool: ExecutorService? = null
 
@@ -36,7 +37,12 @@ class MyVpnService : VpnService() {
                 stopSelf()
                 return START_NOT_STICKY
             }
-            else -> startVpn()
+            else -> {
+                // restart e intent null hote pare, tokhon saved pref theke mode nao
+                fullLock = intent?.getBooleanExtra("FULL_LOCK", BlockManager.isFullLock(this))
+                    ?: BlockManager.isFullLock(this)
+                startVpn()
+            }
         }
         return START_STICKY
     }
@@ -54,7 +60,7 @@ class MyVpnService : VpnService() {
         createNotification()
 
         val builder = Builder()
-            .setSession("URL Blocker")
+            .setSession(if (fullLock) "URL Blocker FULL LOCK" else "URL Blocker")
             .addAddress("10.0.0.2", 32)
             .addRoute("8.8.8.8", 32)
             .addRoute("8.8.4.4", 32)
@@ -65,6 +71,11 @@ class MyVpnService : VpnService() {
             .addDnsServer("8.8.8.8")
             .addDnsServer("1.1.1.1")
             .setMtu(1500)
+        // FULL LOCK: default route tene sob traffic tun e ano, TCP forward kori na bole
+        // sob app er internet dead hobe (kill-switch). IP-literal DoH o bypass korte parbe na.
+        if (fullLock) {
+            try { builder.addRoute("0.0.0.0", 0) } catch (_: Exception) {}
+        }
         // BUG FIX: IPv6 bypass atkate IPv4 force, blocking mode default (true)
         try { builder.allowFamily(OsConstants.AF_INET) } catch (_: Exception) {}
 
@@ -117,8 +128,8 @@ class MyVpnService : VpnService() {
             } catch (_: Exception) {}
         }
         val n: Notification = NotificationCompat.Builder(this, chId)
-            .setContentTitle("URL Blocker ON")
-            .setContentText("Blocked site gulo device-wide bondho ache")
+            .setContentTitle(if (fullLock) "FULL LOCK ON" else "URL Blocker ON")
+            .setContentText(if (fullLock) "Full mobile internet bondho ache" else "Blocked site gulo device-wide bondho ache")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setOngoing(true)
             .build()
@@ -176,6 +187,13 @@ class MyVpnService : VpnService() {
         if (dnsOff >= pkt.size) return
         val dnsQuery = pkt.copyOfRange(dnsOff, pkt.size)
         if (dnsQuery.size < 13) return
+        // FULL LOCK: sob DNS te NXDOMAIN, kono forward na (fast fail, DoH over IP o okejo)
+        if (fullLock) {
+            val respDns = buildNxDomain(dnsQuery)
+            val resp = buildIpUdpPacket(dstIp, srcIp, 53, srcPort, respDns)
+            synchronized(output) { try { output.write(resp) } catch (_: Exception) {} }
+            return
+        }
         val qname = parseQname(dnsQuery) ?: return
 
         if (BlockManager.isBlocked(this, qname)) {

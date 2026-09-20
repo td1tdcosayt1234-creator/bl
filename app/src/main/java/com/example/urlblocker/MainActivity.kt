@@ -42,7 +42,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         binding.list.layoutManager = LinearLayoutManager(this)
+        binding.listApps.layoutManager = LinearLayoutManager(this)
         BlockManager.loadCache(this)
+        BlockManager.seedDefaults(this)
 
         if (!PinManager.hasPin(this)) {
             askNewPin()
@@ -79,6 +81,31 @@ class MainActivity : AppCompatActivity() {
         binding.btnBrowser.setOnClickListener {
             startActivity(Intent(this, BrowserActivity::class.java))
         }
+        binding.swFullLock.setOnCheckedChangeListener { _, on ->
+            if (!authed) { refresh(); return@setOnCheckedChangeListener }
+            if (on == BlockManager.isFullLock(this)) return@setOnCheckedChangeListener
+            askPin(if (on) "FULL LOCK ON korte PIN din" else "FULL LOCK OFF korte PIN din", allowCancel = true) {
+                applyFullLock(on)
+            }
+            refresh()
+        }
+        binding.btnAddApp.setOnClickListener {
+            if (!authed) return@setOnClickListener
+            val pkg = binding.etApp.text?.toString()?.trim() ?: ""
+            if (!BlockManager.addLockedApp(this, pkg)) {
+                Toast.makeText(this, "Sothik package din (ex: com.zhiliaoapp.musically)", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            binding.etApp.text?.clear()
+            refresh()
+            Toast.makeText(this, "App locked: $pkg", Toast.LENGTH_SHORT).show()
+        }
+        binding.btnEnableAppLock.setOnClickListener {
+            Toast.makeText(this, "Accessibility list theke 'URL Blocker' ON koro", Toast.LENGTH_LONG).show()
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            } catch (_: Exception) {}
+        }
 
         refresh()
     }
@@ -97,11 +124,27 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+        val apps = BlockManager.getLockedApps(this).sorted()
+        binding.listApps.adapter = BlockAdapter(apps) { pkg ->
+            AlertDialog.Builder(this)
+                .setTitle("Unlock app?")
+                .setMessage("$pkg AppLock theke sorabo?")
+                .setPositiveButton("Remove") { _, _ ->
+                    BlockManager.removeLockedApp(this, pkg)
+                    refresh()
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
         binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
         binding.tvCount.text = list.size.toString()
         val running = MyVpnService.isRunning
-        binding.tvStatus.text = if (running) "Block ON" else "Block OFF"
-        binding.tvSub.text = if (running) "VPN cholche • site gulo bondho" else "VPN off • site gulo khola"
+        val full = BlockManager.isFullLock(this)
+        if (binding.swFullLock.isChecked != full) binding.swFullLock.isChecked = full
+        binding.tvStatus.text = if (!running) "Block OFF" else if (full) "FULL LOCK ON" else "Block ON"
+        binding.tvSub.text = if (!running) "VPN off • site gulo khola"
+            else if (full) "VPN cholche • full mobile net bondho"
+            else "VPN cholche • site gulo bondho"
         binding.dotStatus.setBackgroundResource(
             if (running) R.drawable.dot_bg_on else R.drawable.dot_bg_off
         )
@@ -134,13 +177,33 @@ class MainActivity : AppCompatActivity() {
     private fun doStartVpn() {
         try {
             val i = Intent(this, MyVpnService::class.java).setAction("START")
+                .putExtra("FULL_LOCK", BlockManager.isFullLock(this))
             ContextCompat.startForegroundService(this, i)
             BlockManager.setRunning(this, true)
             refresh()
-            Toast.makeText(this, "Block ON", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, if (BlockManager.isFullLock(this)) "FULL LOCK ON" else "Block ON", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Start fail: ${e.message}", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun applyFullLock(on: Boolean) {
+        BlockManager.setFullLock(this, on)
+        // mode change VPN rebuild chara karjokor hoy na, cholle restart dao
+        if (MyVpnService.isRunning) {
+            try {
+                startService(Intent(this, MyVpnService::class.java).setAction("STOP"))
+            } catch (_: Exception) {}
+            try {
+                val i = Intent(this, MyVpnService::class.java).setAction("START")
+                    .putExtra("FULL_LOCK", on)
+                ContextCompat.startForegroundService(this, i)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Restart fail: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+        refresh()
+        Toast.makeText(this, if (on) "FULL LOCK ready (Start chaple karjokor)" else "Full lock off", Toast.LENGTH_SHORT).show()
     }
 
     private fun stopBlock() {

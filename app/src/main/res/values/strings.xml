@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">URL Blocker</string>
+    <string name="applock_desc">App Lock: nirbachito app khulle PIN chaibe. Full-mobile block er ongsho.</string>
 </resources>
