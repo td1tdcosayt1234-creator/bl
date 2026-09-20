@@ -9,7 +9,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
-local.properties
 *.hprof
-\
-*.apk\
+*.apk
+*.aab
